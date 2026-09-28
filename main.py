@@ -235,18 +235,37 @@ class ZtartBot(commands.Bot):
 
     async def on_ready(self):
         log.info("logged in as %s", self.user)
+        log.info("servers: %s", [g.name for g in self.guilds] or "НЕТ (бота не пригласили на сервер)")
+        log.info("owner ids: %s", OWNER_IDS or "не заданы (команды доступны всем)")
+
+    async def on_command_error(self, ctx, error):
+        if isinstance(error, commands.CommandNotFound):
+            return
+        log.warning("command error: %r", error)
+        try:
+            await ctx.send(f"⚠️ Ошибка: `{error}`")
+        except discord.HTTPException:
+            pass
 
 
 bot = ZtartBot()
 
 
-def allowed(ctx: commands.Context) -> bool:
-    return not OWNER_IDS or ctx.author.id in OWNER_IDS
+async def allowed(ctx: commands.Context) -> bool:
+    if not OWNER_IDS or ctx.author.id in OWNER_IDS:
+        return True
+    await ctx.send(f"⛔ Нет доступа. Твой ID: `{ctx.author.id}` (добавь его в OWNER_IDS)")
+    return False
+
+
+@bot.command(name="ping")
+async def ping(ctx: commands.Context):
+    await ctx.send("pong")
 
 
 @bot.command(name="ztart")
 async def ztart(ctx: commands.Context):
-    if not allowed(ctx):
+    if not await allowed(ctx):
         return
     if not USER_TOKEN:
         await ctx.send("⚠️ Не задан `DISCORD_USER_TOKEN` в Environment Variables.")
@@ -261,7 +280,7 @@ async def ztart(ctx: commands.Context):
 
 @bot.command(name="stop")
 async def stop(ctx: commands.Context):
-    if not allowed(ctx):
+    if not await allowed(ctx):
         return
     if bot.scan and bot.scan.running:
         bot.scan.stop = True
@@ -272,7 +291,7 @@ async def stop(ctx: commands.Context):
 
 @bot.command(name="status")
 async def status(ctx: commands.Context):
-    if not allowed(ctx):
+    if not await allowed(ctx):
         return
     if not bot.scan:
         await ctx.send("Сканирование ещё не запускалось. `.ztart`")
