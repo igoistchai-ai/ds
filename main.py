@@ -233,16 +233,6 @@ class ZtartBot(commands.Bot):
         super().__init__(command_prefix=".", intents=intents, help_command=None)
         self.scan: Optional[Scan] = None
 
-    async def setup_hook(self):
-        # мини веб-сервер, чтобы Render видел открытый порт (Web Service)
-        app = web.Application()
-        app.router.add_get("/", lambda r: web.Response(text="ok"))
-        app.router.add_get("/health", lambda r: web.Response(text="ok"))
-        runner = web.AppRunner(app)
-        await runner.setup()
-        await web.TCPSite(runner, "0.0.0.0", PORT).start()
-        log.info("health server on :%s", PORT)
-
     async def on_ready(self):
         log.info("logged in as %s", self.user)
 
@@ -290,7 +280,42 @@ async def status(ctx: commands.Context):
     await ctx.send(embed=make_embed(bot.scan, "running" if bot.scan.running else "stopped"))
 
 
-if __name__ == "__main__":
+async def start_health_server():
+    # мини веб-сервер, чтобы Render видел открытый порт (Web Service)
+    app = web.Application()
+    app.router.add_get("/", lambda r: web.Response(text="ok"))
+    app.router.add_get("/health", lambda r: web.Response(text="ok"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    log.info("health server on :%s", PORT)
+
+
+async def wait_until_not_blocked():
+    """Если Discord временно блокирует IP (429 / Cloudflare), не падаем и не
+    перезапускаемся в цикле (это только продлевает блок) — ждём с нарастающей паузой."""
+    delay = 120
+    while True:
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+                async with s.get("https://discord.com/api/v10/gateway") as r:
+                    if r.status != 429:
+                        return
+                    log.warning("Discord блокирует IP (429). Жду %ss...", delay)
+        except Exception as exc:
+            log.warning("проверка Discord не удалась: %s", exc)
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 1800)
+
+
+async def main():
     if not BOT_TOKEN:
         raise SystemExit("Set DISCORD_BOT_TOKEN environment variable")
-    bot.run(BOT_TOKEN, log_handler=None)
+    await start_health_server()
+    await wait_until_not_blocked()
+    async with bot:
+        await bot.start(BOT_TOKEN)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
